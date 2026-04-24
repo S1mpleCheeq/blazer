@@ -1,79 +1,87 @@
-from typing import List
-import uuid
 import json
-from models import Task, TaskNode, Priority, TaskStatus, NodeStatus
+import os
+import uuid
+from typing import List, Dict, Optional
+from models import Task, TaskNode, TaskStatus, NodeStatus, ActionType
 from services.llm_service import call_qwen
 from config_loader import config
 
+
+def _load_locations() -> List[Dict]:
+    path = os.path.join(os.path.dirname(__file__), '..', '..', 'map_data', '标注.json')
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _build_location_map(locations: List[Dict]) -> Dict[str, Dict]:
+    return {loc['name']: loc for loc in locations}
+
+
 class HostAgent:
-    def detect_priority(self, prompt: str) -> Priority:
-        """检测任务优先级"""
-        high_keywords = config.priority_keywords['HIGH']
-        if any(kw in prompt for kw in high_keywords):
-            return Priority.HIGH
-        return Priority.NORMAL
+    def __init__(self):
+        self.locations = _load_locations()
+        self.location_map = _build_location_map(self.locations)
+        self.location_names = [loc['name'] for loc in self.locations]
 
     def decompose_task(self, user_prompt: str) -> Task:
-        """任务拆解"""
-        priority = self.detect_priority(user_prompt)
+        location_list = '\n'.join(f"- {name}" for name in self.location_names)
 
-        decompose_prompt = f"""请将以下任务拆解为具体的执行步骤，以JSON格式返回，支持步骤间的依赖关系。
+        prompt = f"""你是一个机器狗巡检调度系统。请将以下巡检任务拆解为机器狗的动作序列。
 
-任务: {user_prompt}
+可用地点列表：
+{location_list}
 
-返回格式（只返回JSON，不要其他内容）：
+任务：{user_prompt}
+
+规则：
+1. 每到一个地点，必须先 run（导航前往），再 take_photo（拍照巡检）
+2. 地点名称必须与上方列表完全一致
+3. 只返回 JSON，不要其他内容
+
+返回格式：
 {{
-  "nodes": [
-    {{"id": "node_0", "description": "步骤1描述", "dependencies": []}},
-    {{"id": "node_1", "description": "步骤2描述", "dependencies": ["node_0"]}},
-    {{"id": "node_2", "description": "步骤3描述", "dependencies": ["node_0", "node_1"]}}
+  "sequence": [
+    {{"action": "run", "location": "货物存放区A"}},
+    {{"action": "take_photo", "location": "货物存放区A"}},
+    {{"action": "run", "location": "办公区B"}},
+    {{"action": "take_photo", "location": "办公区B"}}
   ]
-}}
+}}"""
 
-说明：
-- dependencies为空表示可以立即执行
-- dependencies包含其他节点ID表示需要等待这些节点完成
-- 限制：最多{config.max_nodes}个节点"""
-
-        response = call_qwen(decompose_prompt)
+        response = call_qwen(prompt)
 
         try:
-            json_start = response.find('{')
-            json_end = response.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end]
-                data = json.loads(json_str)
-                nodes_data = data.get('nodes', [])
-                dag = [
-                    TaskNode(
-                        id=node['id'],
-                        description=node['description'],
-                        status=NodeStatus.PENDING,
-                        dependencies=node.get('dependencies', [])
-                    )
-                    for node in nodes_data[:config.max_nodes]
-                ]
-            else:
-                raise ValueError("No JSON found")
-        except:
-            steps = [line.strip() for line in response.split('\n') if line.strip() and not line.strip().startswith('#')]
-            dag = [
-                TaskNode(id=f"node_{i}", description=step, status=NodeStatus.PENDING, dependencies=[])
-                for i, step in enumerate(steps[:config.max_nodes])
-            ]
+            start = response.find('{')
+            end = response.rfind('}') + 1
+            data = json.loads(response[start:end])
+            sequence = data.get('sequence', [])
+        except Exception:
+            sequence = []
+
+        nodes: List[TaskNode] = []
+        for i, step in enumerate(sequence[:config.max_nodes]):
+            action_str = step.get('action', 'run')
+            location = step.get('location', '')
+            coords = self.location_map.get(location, {})
+
+            action_type = ActionType.RUN if action_str == 'run' else ActionType.TAKE_PHOTO
+
+            label = f"run({location})" if action_type == ActionType.RUN else f"take_photo({location})"
+            # 线性序列：每个节点依赖前一个
+            deps = [f"node_{i-1}"] if i > 0 else []
+
+            nodes.append(TaskNode(
+                id=f"node_{i}",
+                description=label,
+                action_type=action_type,
+                location=location,
+                x=coords.get('x'),
+                y=coords.get('y'),
+                z=coords.get('z'),
+                status=NodeStatus.PENDING,
+                dependencies=deps,
+            ))
 
         task_id = str(uuid.uuid4())[:8]
-        title = user_prompt[:50] + "..." if len(user_prompt) > 50 else user_prompt
-
-        return Task(
-            id=task_id,
-            title=title,
-            priority=priority,
-            status=TaskStatus.RUNNING,
-            dag=dag
-        )
-
-    def should_preempt(self, new_task: Task, current_task: Task) -> bool:
-        """判断是否需要抢占"""
-        priority_order = {Priority.HIGH: 2, Priority.NORMAL: 1}
-        return priority_order[new_task.priority] > priority_order[current_task.priority]
+        title = user_prompt[:50] + ('...' if len(user_prompt) > 50 else '')
+        return Task(id=task_id, title=title, status=TaskStatus.RUNNING, dag=nodes)

@@ -1,6 +1,7 @@
 import json
 import os
 
+
 class Config:
     def __init__(self):
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -12,23 +13,24 @@ class Config:
         return self._config['llm']['model']
 
     @property
-    def embedding_model(self):
-        return self._config['llm']['embedding_model']
-
-    @property
     def max_nodes(self):
         return self._config['task']['max_nodes']
 
     @property
-    def priority_keywords(self):
-        return self._config['task']['priority_keywords']
+    def battery_threshold(self):
+        return self._config['dogs']['battery_threshold']
 
     @property
-    def router_strategy(self):
-        return self._config['router']['strategy']
+    def drain_run(self):
+        return self._config['dogs']['drain_run']
 
     @property
-    def router_top_k(self):
-        return self._config['router']['top_k']
+    def drain_photo(self):
+        return self._config['dogs']['drain_photo']
+
+    @property
+    def charging_seconds(self):
+        return self._config['dogs']['charging_seconds']
+
 
 config = Config()
