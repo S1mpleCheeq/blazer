@@ -1,0 +1,21 @@
+{
+  "llm": {
+    "model": "qwen-plus",
+    "embedding_model": "text-embedding-v3",
+    "temperature": 0.2,
+    "max_tokens": 2000,
+    "_comment": "model可选: qwen-turbo, qwen-plus, qwen-max, qwen2.5-72b-instruct; embedding可选: text-embedding-v1, text-embedding-v2, text-embedding-v3"
+  },
+  "task": {
+    "max_nodes": 10,
+    "priority_keywords": {
+      "HIGH": ["突发", "告警", "异常", "紧急", "高温", "立即", "优先级高"],
+      "NORMAL": []
+    }
+  },
+  "router": {
+    "_comment": "strategy可选: vector_similarity(纯向量匹配,最快) | llm_selection(LLM直接选择,最智能) | hybrid(向量+LLM混合,推荐)",
+    "strategy": "vector_similarity",
+    "top_k": 1
+  }
+}
