@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 环境变量（含 API Key，不提交）
+.env
+.env.*
+
+# 前端依赖
+frontend/node_modules/
+frontend/dist/
+
+# Vite 缓存
+frontend/.vite/
+
+# 点云大文件（二进制，无需版本控制）
+*.pcd
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
