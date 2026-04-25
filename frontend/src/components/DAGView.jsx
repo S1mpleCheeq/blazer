@@ -1,136 +1,97 @@
-import React, { useMemo } from 'react';
-import ReactFlow, { Background, Controls, Handle, Position } from 'reactflow';
-import 'reactflow/dist/style.css';
+import React from 'react';
 
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 80;
-const H_GAP = 100;
-const V_GAP = 30;
+const ACTION_ICON = { run: '🚶', take_photo: '📷', return_to_charge: '🔋' };
+const ACTION_LABEL = { run: '前往', take_photo: '拍照', return_to_charge: '充电' };
 
-// 固定高度的自定义节点
-function TaskNodeComponent({ data }) {
-  const { label, agent, result, status } = data;
-  const bg = status === 'completed' ? '#4ade80' : status === 'running' ? '#fbbf24' : '#d1d5db';
+function StepNode({ node, index }) {
+  const { action_type, location, status, result } = node;
+  const bg = status === 'completed' ? '#d4edda'
+           : status === 'running'   ? '#fff3cd'
+           : '#f8f9fa';
+  const border = status === 'completed' ? '#28a745'
+               : status === 'running'   ? '#ffc107'
+               : '#dee2e6';
+  const icon = ACTION_ICON[action_type] || '▶';
+  const label = ACTION_LABEL[action_type] || action_type;
+
   return (
-    <div style={{
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
-      background: bg,
-      borderRadius: 6,
-      border: '1px solid #999',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      padding: '0 10px',
-      boxSizing: 'border-box',
-      overflow: 'hidden'
-    }}>
-      <Handle type="target" position={Position.Left} style={{ background: '#555' }} />
-      <div style={{ fontSize: 12, fontWeight: 'bold', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
-      <div style={{ fontSize: 10, color: '#444', marginTop: 2 }}>{agent || '未分配'}</div>
-      {result && (
-        <div style={{ fontSize: 10, color: '#333', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          ✓ {result.substring(0, 40)}...
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+      {/* 步骤序号 + 竖线 */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: '50%',
+          background: border, color: status === 'pending' ? '#6c757d' : '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 'bold',
+        }}>
+          {status === 'completed' ? '✓' : status === 'running' ? '●' : index + 1}
         </div>
-      )}
-      <Handle type="source" position={Position.Right} style={{ background: '#555' }} />
+        <div style={{ width: 2, flex: 1, background: '#dee2e6', minHeight: 16 }} />
+      </div>
+
+      {/* 内容卡片 */}
+      <div style={{
+        flex: 1, marginBottom: 8, padding: '8px 12px',
+        background: bg, border: `1px solid ${border}`,
+        borderRadius: 6, fontSize: 13,
+      }}>
+        <div style={{ fontWeight: 'bold' }}>
+          {icon} {label}({location || node.description})
+        </div>
+        {node.x != null && (
+          <div style={{ fontSize: 11, color: '#6c757d', marginTop: 2 }}>
+            坐标：({node.x.toFixed(2)}, {node.y.toFixed(2)}, {node.z.toFixed(2)})
+          </div>
+        )}
+        {result && (
+          <div style={{ fontSize: 11, color: '#155724', marginTop: 4 }}>✓ {result}</div>
+        )}
+        {status === 'running' && !result && (
+          <div style={{ fontSize: 11, color: '#856404', marginTop: 4 }}>执行中...</div>
+        )}
+      </div>
     </div>
   );
 }
 
-const nodeTypes = { taskNode: TaskNodeComponent };
-
 function DAGView({ task }) {
-  const { nodes, edges } = useMemo(() => {
-    if (!task || !task.dag || task.dag.length === 0) return { nodes: [], edges: [] };
+  if (!task) {
+    return (
+      <div style={{ padding: 30, color: '#999', textAlign: 'center' }}>
+        暂无任务，请在左侧输入巡检指令
+      </div>
+    );
+  }
 
-    // 计算层级
-    const levels = {};
-    const inDegree = {};
-    const adjList = {};
-
-    task.dag.forEach(node => {
-      inDegree[node.id] = node.dependencies ? node.dependencies.length : 0;
-      adjList[node.id] = [];
-    });
-
-    task.dag.forEach(node => {
-      (node.dependencies || []).forEach(depId => {
-        if (adjList[depId]) adjList[depId].push(node.id);
-      });
-    });
-
-    const queue = task.dag.filter(n => inDegree[n.id] === 0).map(n => n.id);
-    queue.forEach(id => { levels[id] = 0; });
-    const bfsQueue = [...queue];
-    while (bfsQueue.length > 0) {
-      const cur = bfsQueue.shift();
-      adjList[cur].forEach(next => {
-        levels[next] = Math.max(levels[next] || 0, levels[cur] + 1);
-        inDegree[next]--;
-        if (inDegree[next] === 0) bfsQueue.push(next);
-      });
-    }
-
-    // 按层分组
-    const groups = {};
-    task.dag.forEach(node => {
-      const lv = levels[node.id] || 0;
-      if (!groups[lv]) groups[lv] = [];
-      groups[lv].push(node);
-    });
-
-    // 所有层中最多节点数
-    const maxCount = Math.max(...Object.values(groups).map(g => g.length));
-    const totalH = maxCount * NODE_HEIGHT + (maxCount - 1) * V_GAP;
-
-    const nodes = task.dag.map(node => {
-      const lv = levels[node.id] || 0;
-      const groupNodes = groups[lv];
-      const idx = groupNodes.indexOf(node);
-      const groupH = groupNodes.length * NODE_HEIGHT + (groupNodes.length - 1) * V_GAP;
-      // 垂直居中对齐
-      const offsetY = (totalH - groupH) / 2;
-      return {
-        id: node.id,
-        type: 'taskNode',
-        position: {
-          x: lv * (NODE_WIDTH + H_GAP),
-          y: offsetY + idx * (NODE_HEIGHT + V_GAP)
-        },
-        data: {
-          label: node.description,
-          agent: node.agent_type,
-          result: node.result,
-          status: node.status
-        }
-      };
-    });
-
-    const edges = [];
-    task.dag.forEach(node => {
-      (node.dependencies || []).forEach(depId => {
-        edges.push({
-          id: `${depId}->${node.id}`,
-          source: depId,
-          target: node.id,
-          type: 'smoothstep',
-          animated: node.status === 'running'
-        });
-      });
-    });
-
-    return { nodes, edges };
-  }, [task]);
-
-  if (!task) return <div style={{ padding: 20, color: '#999' }}>暂无任务</div>;
+  const completed = task.dag.filter(n => n.status === 'completed').length;
+  const total = task.dag.length;
+  const progress = total > 0 ? Math.round(completed / total * 100) : 0;
 
   return (
-    <div style={{ height: 'calc(100vh - 220px)', minHeight: 300, border: '1px solid #ccc', borderRadius: 4 }}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView>
-        <Background />
-        <Controls />
-      </ReactFlow>
+    <div style={{ height: 'calc(100vh - 200px)', overflowY: 'auto', padding: '0 4px' }}>
+      {/* 进度条 */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#666', marginBottom: 4 }}>
+          <span>执行进度</span>
+          <span>{completed}/{total} 步</span>
+        </div>
+        <div style={{ height: 6, background: '#e9ecef', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', width: `${progress}%`,
+            background: task.status === 'completed' ? '#28a745' : '#007bff',
+            borderRadius: 3, transition: 'width 0.4s',
+          }} />
+        </div>
+      </div>
+
+      {/* 步骤列表 */}
+      {task.dag.map((node, i) => (
+        <StepNode key={node.id} node={node} index={i} />
+      ))}
+
+      {task.dag.length === 0 && (
+        <div style={{ color: '#999', fontSize: 13 }}>任务序列为空</div>
+      )}
     </div>
   );
 }

@@ -1,20 +1,17 @@
 {
   "llm": {
-    "model": "qwen3.6-plus",
-    "embedding_model": "text-embedding-v3",
+    "model": "qwen-plus",
     "temperature": 0.2,
     "max_tokens": 2048
   },
   "task": {
-    "max_nodes": 10,
-    "priority_keywords": {
-      "HIGH": ["突发", "告警", "异常", "紧急", "高温", "立即", "优先级高"],
-      "NORMAL": []
-    }
+    "max_nodes": 20
   },
-  "router": {
-    "_comment": "strategy可选: vector_similarity(纯向量匹配,最快) | llm_selection(LLM直接选择,最智能) | hybrid(向量+LLM混合,推荐)",
-    "strategy": "llm_selection",
-    "top_k": 1
+  "dogs": {
+    "count": 3,
+    "battery_threshold": 20,
+    "drain_run": 15,
+    "drain_photo": 5,
+    "charging_seconds": 5
   }
 }

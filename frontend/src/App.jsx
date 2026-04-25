@@ -2,140 +2,131 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import TaskStack from './components/TaskStack';
 import DAGView from './components/DAGView';
-import AgentStatus from './components/AgentStatus';
+import RobotStatus from './components/RobotStatus';
 
 const API_BASE = 'http://localhost:8000';
 
 function App() {
-  const [taskStack, setTaskStack] = useState([]);        // 活跃任务栈
-  const [completedTasks, setCompletedTasks] = useState([]); // 已完成任务历史
+  const [taskStack, setTaskStack] = useState([]);
+  const [completedTasks, setCompletedTasks] = useState([]);
+  const [dogs, setDogs] = useState([]);
   const [viewingTask, setViewingTask] = useState(null);
   const [autoFollow, setAutoFollow] = useState(true);
   const [prompt, setPrompt] = useState('');
-  const [agentStatus, setAgentStatus] = useState({
-    Aerial: null, Ground: null, Indoor: null,
-    Thermal: null, Electrical: null, Oil: null,
-    Emergency: null, Maintenance: null, Diagnosis: null, Report: null
-  });
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const taskCacheRef = useRef({});
-
-  const updateAgentStatus = (task) => {
-    const newStatus = {
-      Aerial: null, Ground: null, Indoor: null,
-      Thermal: null, Electrical: null, Oil: null,
-      Emergency: null, Maintenance: null, Diagnosis: null, Report: null
-    };
-    if (task?.dag) {
-      task.dag.forEach(node => {
-        if (node.status === 'running' && node.agent_type) {
-          newStatus[node.agent_type] = node.description;
-        }
-      });
-    }
-    setAgentStatus(newStatus);
-  };
 
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:8000/ws/execution');
 
     ws.onmessage = (event) => {
       const update = JSON.parse(event.data);
-      console.log('[WS]', update.type);
 
-      // 更新任务缓存
-      if (update.task) {
-        taskCacheRef.current[update.task.id] = update.task;
-      }
+      if (update.dogs) setDogs(update.dogs);
 
-      // 更新任务栈
       if (update.task_stack !== undefined) {
         setTaskStack(update.task_stack);
         update.task_stack.forEach(t => { taskCacheRef.current[t.id] = t; });
       }
 
-      // 任务完成：移入历史
-      if (update.type === 'task_completed' && update.task) {
-        const done = update.task;
-        taskCacheRef.current[done.id] = done;
-        setCompletedTasks(prev => {
-          const exists = prev.find(t => t.id === done.id);
-          return exists ? prev.map(t => t.id === done.id ? done : t) : [done, ...prev];
-        });
-        if (autoFollow) {
-          setViewingTask(done);
-          updateAgentStatus(done);
-        }
-        return;
+      if (update.completed_tasks !== undefined) {
+        setCompletedTasks(update.completed_tasks);
+        update.completed_tasks.forEach(t => { taskCacheRef.current[t.id] = t; });
       }
 
-      // 普通task更新
       if (update.task) {
         const incoming = update.task;
-        setViewingTask(prev => {
-          if (autoFollow) { updateAgentStatus(incoming); return incoming; }
-          if (prev?.id === incoming.id) { updateAgentStatus(incoming); return incoming; }
-          return prev;
-        });
-      }
-
-      // 任务恢复
-      if (update.type === 'task_resumed' && update.task) {
-        taskCacheRef.current[update.task.id] = update.task;
-        if (autoFollow) { setViewingTask(update.task); updateAgentStatus(update.task); }
+        taskCacheRef.current[incoming.id] = incoming;
+        if (autoFollow) setViewingTask(incoming);
+        else if (viewingTask?.id === incoming.id) setViewingTask(incoming);
       }
     };
 
-    ws.onerror = (e) => console.error('[WS] 错误:', e);
+    ws.onerror = () => console.error('[WS] 连接错误');
 
-    // 初始化获取任务栈
     axios.get(`${API_BASE}/api/task/stack`).then(res => {
-      setTaskStack(res.data.task_stack);
+      setTaskStack(res.data.task_stack || []);
+      setCompletedTasks(res.data.completed_tasks || []);
+    });
+
+    axios.get(`${API_BASE}/api/robots`).then(res => {
+      setDogs(res.data.dogs || []);
     });
 
     return () => ws.close();
-  }, [autoFollow]);
+  }, []);
+
+  // autoFollow 变化时同步更新 task 视图
+  useEffect(() => {
+    if (autoFollow) {
+      const active = taskStack[taskStack.length - 1];
+      if (active) setViewingTask(taskCacheRef.current[active.id] || active);
+    }
+  }, [autoFollow, taskStack]);
 
   const handleSelectTask = (task) => {
     setAutoFollow(false);
-    // 从缓存获取最新状态
-    const latest = taskCacheRef.current[task.id] || task;
-    setViewingTask(latest);
-    updateAgentStatus(latest);
+    setViewingTask(taskCacheRef.current[task.id] || task);
   };
 
   const submitTask = async () => {
     if (!prompt.trim()) return;
+    setSubmitting(true);
+    setErrorMsg('');
     try {
-      const res = await axios.post(`${API_BASE}/api/task/submit`, { prompt });
+      await axios.post(`${API_BASE}/api/task/submit`, { prompt });
       setPrompt('');
-      setAutoFollow(true);  // 提交新任务后自动跟随
-    } catch (error) {
-      console.error('提交失败:', error);
+      setAutoFollow(true);
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message;
+      setErrorMsg(msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const agents = Object.entries(agentStatus).map(([name, task]) => ({ name, current_task: task }));
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitTask();
+  };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif', background: '#f0f2f5' }}>
       {/* 左侧面板 */}
-      <div style={{ width: '30%', borderRight: '1px solid #ccc', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '20px', borderBottom: '1px solid #eee' }}>
-          <h2 style={{ margin: '0 0 10px 0' }}>任务输入</h2>
+      <div style={{ width: '30%', background: '#fff', borderRight: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e8e8e8' }}>
+          <h2 style={{ margin: '0 0 12px', fontSize: 16, color: '#1a1a1a' }}>🐕 巡检任务调度</h2>
           <textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="输入任务描述..."
-            style={{ width: '100%', height: '100px', marginBottom: '10px', padding: '10px', boxSizing: 'border-box', resize: 'vertical' }}
+            onChange={e => setPrompt(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={'输入巡检任务，例如：\n"巡检货物存放区A、B和办公区C"'}
+            style={{
+              width: '100%', height: 90, padding: '8px 10px', boxSizing: 'border-box',
+              border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 13,
+              resize: 'vertical', fontFamily: 'inherit',
+            }}
           />
           <button
             onClick={submitTask}
-            style={{ width: '100%', padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            disabled={submitting || !prompt.trim()}
+            style={{
+              width: '100%', marginTop: 8, padding: '9px 0',
+              background: submitting ? '#6c757d' : '#1890ff',
+              color: '#fff', border: 'none', borderRadius: 6,
+              fontSize: 14, cursor: submitting ? 'not-allowed' : 'pointer',
+            }}
           >
-            提交任务
+            {submitting ? '拆解中...' : '提交任务 (Ctrl+Enter)'}
           </button>
+          {errorMsg && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: '#fff5f5', padding: '6px 10px', borderRadius: 4 }}>
+              ⚠ {errorMsg}
+            </div>
+          )}
         </div>
-        <div style={{ flex: 1, overflow: 'auto' }}>
+
+        <div style={{ flex: 1, overflowY: 'auto' }}>
           <TaskStack
             tasks={taskStack}
             completedTasks={completedTasks}
@@ -143,12 +134,12 @@ function App() {
             onSelect={handleSelectTask}
           />
           {!autoFollow && (
-            <div style={{ padding: '0 20px 10px' }}>
+            <div style={{ padding: '0 16px 12px' }}>
               <button
                 onClick={() => setAutoFollow(true)}
-                style={{ width: '100%', padding: '6px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: 12 }}
+                style={{ width: '100%', padding: '6px', background: '#52c41a', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer' }}
               >
-                🔄 恢复自动跟随
+                ↩ 恢复自动跟随
               </button>
             </div>
           )}
@@ -156,22 +147,25 @@ function App() {
       </div>
 
       {/* 右侧面板 */}
-      <div style={{ width: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ flex: 1, padding: '20px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <h2 style={{ margin: 0 }}>DAG执行视图</h2>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, padding: '16px 20px', overflow: 'hidden', background: '#fff', margin: '12px 12px 0', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 16 }}>任务执行序列</h2>
             {viewingTask && (
-              <span style={{ fontSize: 12, color: '#666', backgroundColor: '#f0f0f0', padding: '2px 8px', borderRadius: 10 }}>
+              <span style={{ fontSize: 12, color: '#666', background: '#f0f0f0', padding: '2px 8px', borderRadius: 10 }}>
                 {viewingTask.title}
               </span>
             )}
             {!autoFollow && (
-              <span style={{ fontSize: 11, color: '#e67e22' }}>（手动模式）</span>
+              <span style={{ fontSize: 11, color: '#fa8c16' }}>（手动浏览）</span>
             )}
           </div>
           <DAGView task={viewingTask} />
         </div>
-        <AgentStatus agents={agents} />
+
+        <div style={{ background: '#fff', margin: '8px 12px 12px', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+          <RobotStatus dogs={dogs} />
+        </div>
       </div>
     </div>
   );
