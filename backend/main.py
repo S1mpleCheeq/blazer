@@ -164,6 +164,7 @@ async def submit_task(request: TaskSubmitRequest):
 
     sequence = [
         {"step": i + 1, "action": n.action_type, "location": n.location,
+         "description": n.description, "result": n.result,
          "x": n.x, "y": n.y, "z": n.z}
         for i, n in enumerate(task.dag)
     ]
@@ -189,6 +190,7 @@ async def get_task_sequence(task_id: str):
     dog_name = task.dag[0].agent_type if task.dag else None
     sequence = [
         {"step": i + 1, "action": n.action_type, "location": n.location,
+         "description": n.description, "result": n.result,
          "x": n.x, "y": n.y, "z": n.z, "status": n.status}
         for i, n in enumerate(task.dag)
         if n.action_type != ActionType.RETURN_TO_CHARGE

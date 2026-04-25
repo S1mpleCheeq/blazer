@@ -66,7 +66,7 @@ class HostAgent:
 
             action_type = ActionType.RUN if action_str == 'run' else ActionType.TAKE_PHOTO
 
-            label = f"run({location})" if action_type == ActionType.RUN else f"take_photo({location})"
+            label = f"前往{location}" if action_type == ActionType.RUN else f"拍照巡检{location}"
             # 线性序列：每个节点依赖前一个
             deps = [f"node_{i-1}"] if i > 0 else []
 
